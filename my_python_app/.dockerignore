@@ -12,3 +12,5 @@ tests
 Deployment.yaml
 Service.yaml
 my-app/
+pytest.ini
+.pytest_cache

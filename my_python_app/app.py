@@ -70,6 +70,13 @@ def after_request_metrics(response):
     REQUEST_COUNT.labels(request.method, endpoint, response.status_code).inc()
     return response
 
+@app.after_request
+def set_security_headers(response):
+    response.headers.setdefault('X-Content-Type-Options', 'nosniff')
+    response.headers.setdefault('X-Frame-Options', 'DENY')
+    response.headers.setdefault('Referrer-Policy', 'strict-origin-when-cross-origin')
+    return response
+
 @app.route('/')
 def index():
     return render_template('index.html')
