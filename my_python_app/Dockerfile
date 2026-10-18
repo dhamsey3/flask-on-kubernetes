@@ -1,5 +1,5 @@
 # ---------- build stage ----------
-FROM python:3.9-slim AS builder
+FROM python:3.12-slim AS builder
 
 WORKDIR /app
 
@@ -12,7 +12,7 @@ COPY requirements.txt .
 RUN pip install --no-cache-dir --prefix=/install -r requirements.txt
 
 # ---------- runtime stage ----------
-FROM python:3.9-slim AS runtime
+FROM python:3.12-slim AS runtime
 
 LABEL maintainer="contact@dijato-geoservices.com" \
       description="Dijato Geoservices Flask application"

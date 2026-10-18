@@ -1,88 +1,75 @@
-# Dijato Geoservices — Kubernetes Deployment & Modern Web App
+# Flask on Kubernetes
 
-This repository provides a modern, production-ready Flask web application for Dijato Geoservices, containerized with Docker and ready for deployment on Kubernetes (Minikube or cloud). It features a beautiful UI, dynamic API endpoints, Prometheus metrics, and robust security.
+A small Flask web app, a sample site for Dijato Geoservices, packaged as a non-root container and deployed to Kubernetes with health probes, resource limits and zero-downtime rolling updates. CI tests the app, builds and smoke-tests the image, and validates the manifests against the Kubernetes schemas.
 
-## Features
+## What's in it
 
-### Web Application
-- Modern Flask app with Bootstrap 4 UI (hero, services, testimonials, contact form)
-- Dynamic loading of services and testimonials from backend API
-- Contact form with validation, spinner, and rate limiting
-- Security headers and best practices
+**Container** ([`Dockerfile`](my_python_app/Dockerfile))
+- Multi-stage build: compilers stay in the build stage, the runtime image has only the installed packages.
+- Runs Gunicorn as a non-root user, with a Docker `HEALTHCHECK` on `/health`.
 
-### API Endpoints
-- `/api/services` — List of geoservices (for UI or API use)
-- `/api/testimonials` — Client testimonials (for UI or API use)
-- `/api/version` — App version
-- `/metrics` — Prometheus metrics endpoint
-- `/health` — Health check for Kubernetes
+**Kubernetes** ([`namespace.yaml`](my_python_app/namespace.yaml), [`Deployment.yaml`](my_python_app/Deployment.yaml), [`Service.yaml`](my_python_app/Service.yaml))
+- 3 replicas in their own namespace, rolling updates with `maxUnavailable: 0`.
+- Pod hardening: non-root user, read-only root filesystem, all Linux capabilities dropped, no privilege escalation. `/tmp` is a writable `emptyDir`.
+- Startup, liveness and readiness probes on `/health`; CPU and memory requests and limits.
+- A `LoadBalancer` Service on port 80.
 
-### Kubernetes & Docker
-- Multi-stage Docker build for small, secure images
-- Kubernetes manifests: Namespace, Deployment, Service (LoadBalancer)
-- SecurityContext, resource limits, liveness/readiness/startup probes
-- Minikube quick-start script for local dev
+**App** ([`app.py`](my_python_app/app.py))
 
-## Quick Start (Minikube)
+| Endpoint | Purpose |
+|---|---|
+| `/` | The site |
+| `/health` | Probe target |
+| `/api/services`, `/api/testimonials`, `/api/version` | JSON used by the page |
+| `/contact` (POST) | Contact form: validated, length-capped, 5 requests per minute per client |
+| `/metrics` | Prometheus request counter by endpoint and status |
 
-1. Start Minikube:
-   ```sh
-   minikube start --driver=docker
-   ```
-2. Deploy everything (from `my_python_app/`):
-   ```sh
-   ./deploy-local.sh
-   ```
-3. Open the app:
-   ```sh
-   minikube service myapp-service -n dijato
-   ```
+Every response carries `X-Content-Type-Options`, `X-Frame-Options` and `Referrer-Policy` headers.
 
-## Development
+**CI** ([`.github/workflows/ci.yml`](.github/workflows/ci.yml)), on every push and pull request to `main`:
+1. flake8 and the pytest suite.
+2. Build the image, start it and check `/health`.
+3. Validate the manifests with [kubeconform](https://github.com/yannh/kubeconform) in strict mode, so a misspelled field fails the build without needing a cluster.
 
-To rebuild and redeploy after code changes:
+## Run it on Minikube
+
+Requirements: Docker, [Minikube](https://minikube.sigs.k8s.io/) and kubectl.
+
+```sh
+cd my_python_app
+./deploy-local.sh                        # starts Minikube, builds the image inside it, applies the manifests
+minikube service myapp-service -n dijato # opens the app
+```
+
+After a code change:
 
 ```sh
 cd my_python_app
 eval $(minikube docker-env)
 docker build -t my-app:1.0.0 .
 kubectl rollout restart deployment/myapp-deployment -n dijato
+kubectl rollout status deployment/myapp-deployment -n dijato
 ```
 
-## Monitoring
+Useful commands:
 
-- Prometheus metrics available at `/metrics`
+```sh
+kubectl get pods -n dijato
+kubectl logs -l app=my-app -n dijato --tail=40
+kubectl port-forward svc/myapp-service 8080:80 -n dijato
+```
 
-## Security
+## Run the tests
 
-- All endpoints have security headers
-- Contact form is rate-limited and validated
-- Container runs as non-root, read-only filesystem
+```sh
+cd my_python_app
+python -m pip install -r requirements.txt pytest
+pytest
+```
 
-## Troubleshooting
+## Limitations
 
-- If you don't see UI changes, rebuild the Docker image and restart the deployment (see above)
-- Check pod logs:
-  ```sh
-  kubectl logs -l app=my-app -n dijato --tail=40
-  ```
-
-## Testing & Useful Commands
-
-- Check pods:
-  ```sh
-  kubectl get pods -n dijato
-  ```
-- Check services:
-  ```sh
-  kubectl get svc -n dijato
-  ```
-- Check logs:
-  ```sh
-  kubectl logs -l app=my-app -n dijato --tail=40
-  ```
-- Exec into a pod:
-  ```sh
-  kubectl exec -it <pod-name> -n dijato -- /bin/bash
-  ```
-
+- Rate limits and metrics live in memory, so each Gunicorn worker in each pod keeps its own. With 3 pods and 2 workers each, a client can send more than 5 contact messages a minute, and `/metrics` shows one worker's counts. Shared limits need Redis; aggregated metrics need `prometheus_client`'s multiprocess mode.
+- The contact form only logs messages; nothing is sent or stored.
+- The services and testimonials are placeholder content.
+- On Minikube, the `LoadBalancer` Service needs `minikube service` or `minikube tunnel` to be reachable.
